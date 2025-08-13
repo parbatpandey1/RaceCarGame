@@ -1,0 +1,456 @@
+#include <SFML/Graphics.hpp>
+#include <SFML/Audio.hpp>
+#include <iostream>
+#include <vector>
+#include <sstream>
+#include <cstdlib>
+#include <ctime>
+#include <random>
+
+using namespace sf;
+using namespace std;
+
+// Window dimensions
+const int WIDTH = 1024;
+const int HEIGHT = 768;
+
+// Road parameters
+const int ROAD_W = 3000;  // Wide road
+const int SEG_LEN = 200;
+const float CAM_D = 0.84f;
+
+const int NUM_LANES = 3;
+
+// Game states
+enum GameState { MENU, PLAYING, GAME_OVER_PROMPT };
+
+// Draw one segment of road as a quad
+void drawQuad(RenderWindow& w, Color c,
+    int x1, int y1, int w1,
+    int x2, int y2, int w2)
+{
+    ConvexShape shape(4);
+    shape.setFillColor(c);
+    shape.setPoint(0, { float(x1 - w1), float(y1) });
+    shape.setPoint(1, { float(x2 - w2), float(y2) });
+    shape.setPoint(2, { float(x2 + w2), float(y2) });
+    shape.setPoint(3, { float(x1 + w1), float(y1) });
+    w.draw(shape);
+}
+
+// Draw two dashed lane lines for three lanes with scrolling effect
+void drawLaneLines(RenderWindow& window, int x1, int y1, int w1, int x2, int y2, int w2, int scrollPos) {
+    const int dashCount = 20;             // number of dashes per segment vertical length
+    const float totalLength = float(y2 - y1);
+    const float dashHeight = totalLength / dashCount * 0.6f;
+    const float gapHeight = totalLength / dashCount * 0.4f;
+
+    float laneWidthStart = (float)(w1 * 2) / NUM_LANES;
+    float laneWidthEnd = (float)(w2 * 2) / NUM_LANES;
+
+    Color yellowDash(255, 215, 0); // Gold-ish yellow
+
+    // Two lane lines for 3 lanes: lanes 1 and 2
+    for (int lane = 1; lane <= 2; lane++) {
+        float startX = x1 - w1 + lane * laneWidthStart;
+        float endX = x2 - w2 + lane * laneWidthEnd;
+
+        // Scroll offset controls vertical movement of dashes
+        float scrollOffset = fmod(scrollPos * (dashHeight + gapHeight) * 0.02f, dashHeight + gapHeight);
+        float currentY = y1 - scrollOffset;
+
+        while (currentY < y2) {
+            float dashStartY = currentY;
+            float dashEndY = currentY + dashHeight;
+
+            if (dashEndY > y2) dashEndY = (float)y2;
+
+            float lerpTStart = (dashStartY - y1) / totalLength;
+            float lerpTEnd = (dashEndY - y1) / totalLength;
+
+            float dashStartX = startX + (endX - startX) * lerpTStart;
+            float dashEndX = startX + (endX - startX) * lerpTEnd;
+
+            Vertex line[] = {
+                Vertex(Vector2f(dashStartX, dashStartY), yellowDash),
+                Vertex(Vector2f(dashEndX, dashEndY), yellowDash)
+            };
+            window.draw(line, 2, Lines);
+
+            currentY += dashHeight + gapHeight;
+        }
+    }
+}
+
+// One line/segment of the road
+struct Line {
+    float x = 0, y = 0, z = 0;       // world coords
+    float X, Y, W, clip, scale;  // screen coords
+    float spriteX = 0;           // offset for roadside sprites (unused now)
+    Sprite sprite;               // roadside sprite (unused now)
+    Sprite opCar;                // opponent car sprite
+    bool hasOpponent = false;
+    float opCarHorizontalOffset = 0; // horizontal offset for opponent car within road width
+
+    void project(int camX, int camY, int camZ) {
+        scale = CAM_D / (z - camZ);
+        X = (1 + scale * (x - camX)) * WIDTH / 2;
+        Y = (1 - scale * (y - camY)) * HEIGHT / 2;
+        W = scale * ROAD_W * WIDTH / 2; // half road width in pixels on screen
+    }
+
+    FloatRect drawOpponent(RenderWindow& win) {
+        if (!hasOpponent || !opCar.getTexture()) return {};
+        Sprite s = opCar;
+        auto rt = s.getTextureRect();
+        float originalWidth = (rt.width > 0) ? (float)rt.width : (float)s.getTexture()->getSize().x;
+        float originalHeight = (rt.height > 0) ? (float)rt.height : (float)s.getTexture()->getSize().y;
+        if (originalWidth <= 0 || originalHeight <= 0) return {};
+
+        float carHalfWidthPx = W * 0.5f;
+        float currentCarWidth = carHalfWidthPx;
+        float currentCarHeight = originalHeight * (currentCarWidth / originalWidth);
+
+        float dx = X + opCarHorizontalOffset * W - (currentCarWidth / 2.f);
+        float dy = Y - currentCarHeight;
+
+        float clipH = dy + currentCarHeight - clip;
+        clipH = max(0.f, clipH);
+        if (clipH >= currentCarHeight) return {};
+
+        int visibleTexH = int(originalHeight - originalHeight * clipH / currentCarHeight);
+        if (visibleTexH <= 0) return {};
+
+        s.setTextureRect({ 0, 0, int(originalWidth), visibleTexH });
+        s.setScale(currentCarWidth / originalWidth, currentCarHeight / originalHeight);
+        s.setPosition(dx, dy);
+        win.draw(s);
+        return s.getGlobalBounds();
+    }
+};
+
+// Display the main menu; return true to start playing
+bool showMainMenu(RenderWindow& window) {
+    Font font;
+    if (!font.loadFromFile("fonts/OpenSans.ttf")) return false;
+
+    Text title("CAR RACING GAME", font, 60);
+    title.setFillColor(Color::Yellow);
+    title.setPosition(WIDTH / 2 - title.getGlobalBounds().width / 2, 100);
+
+    vector<Text> options(2);
+    options[0].setString("Start Game");
+    options[1].setString("Exit");
+    for (int i = 0; i < 2; i++) {
+        options[i].setFont(font);
+        options[i].setCharacterSize(40);
+        options[i].setPosition(WIDTH / 2 - options[i].getGlobalBounds().width / 2, 250 + i * 70);
+        options[i].setFillColor(i == 0 ? Color::Red : Color::White);
+    }
+    int selected = 0;
+
+    while (window.isOpen()) {
+        Event e;
+        while (window.pollEvent(e)) {
+            if (e.type == Event::Closed) return false;
+            if (e.type == Event::KeyPressed) {
+                if (e.key.code == Keyboard::Up || e.key.code == Keyboard::W) {
+                    options[selected].setFillColor(Color::White);
+                    selected = (selected - 1 + options.size()) % options.size();
+                    options[selected].setFillColor(Color::Red);
+                }
+                else if (e.key.code == Keyboard::Down || e.key.code == Keyboard::S) {
+                    options[selected].setFillColor(Color::White);
+                    selected = (selected + 1) % options.size();
+                    options[selected].setFillColor(Color::Red);
+                }
+                else if (e.key.code == Keyboard::Enter) {
+                    return selected == 0;
+                }
+            }
+        }
+        window.clear(Color(30, 30, 30));
+        window.draw(title);
+        for (auto& opt : options) window.draw(opt);
+        window.display();
+    }
+    return false;
+}
+
+int main() {
+    mt19937 rng((unsigned)time(nullptr));
+    uniform_int_distribution<int> dist_opponent_placement(1, 100);
+    uniform_real_distribution<float> dist_opponent_pos(-0.8f, 0.8f);
+    uniform_int_distribution<int> dist_opponent_type(0, 1);
+
+    RenderWindow window({ WIDTH, HEIGHT }, "Car Race");
+    window.setFramerateLimit(60);
+
+    if (!showMainMenu(window)) return 0;
+
+    SoundBuffer bufEngine, bufOver, bufBoost;
+    if (!bufEngine.loadFromFile("sounds/sound.wav")) {
+        cerr << "Error loading sound.wav" << endl;
+        return -1;
+    }
+    if (!bufOver.loadFromFile("sounds/game_over.wav")) {
+        cerr << "Error loading game_over.wav" << endl;
+        return -1;
+    }
+    if (!bufBoost.loadFromFile("sounds/boost.wav")) {
+        cerr << "Error loading boost.wav" << endl;
+        return -1;
+    }
+    Sound engine(bufEngine), sfxOver(bufOver), sfxBoost(bufBoost);
+    engine.setLoop(true);
+    engine.play();
+
+    Font raider, open;
+    if (!raider.loadFromFile("Fonts/raider.ttf")) {
+        cerr << "Error loading raider.ttf" << endl;
+        return -1;
+    }
+    if (!open.loadFromFile("Fonts/OpenSans.ttf")) {
+        cerr << "Error loading OpenSans.ttf" << endl;
+        return -1;
+    }
+    Text tGameOver("GAME OVER", raider, 100);
+    tGameOver.setFillColor({ 155,34,48 });
+    tGameOver.setPosition(WIDTH / 2 - tGameOver.getGlobalBounds().width / 2, HEIGHT / 2 - 210);
+    Text tPrompt("Play Again? (Y/N)", open, 50);
+    tPrompt.setFillColor(Color::White);
+    tPrompt.setPosition(WIDTH / 2 - tPrompt.getGlobalBounds().width / 2, HEIGHT / 2);
+    Text tScore("", open, 30);
+    tScore.setFillColor(Color::White);
+    tScore.setPosition(10, 10);
+
+    // Load background
+    Texture bgTex;
+    if (!bgTex.loadFromFile("images/bg3.png")) {
+        cerr << "Error loading bg3.png" << endl;
+        return -1;
+    }
+    bgTex.setRepeated(true);
+    Sprite background(bgTex);
+    background.setTextureRect({ 0,0,5000,411 });
+    background.setPosition(-2000, 0);
+
+    Texture playerCarTex;
+    if (!playerCarTex.loadFromFile("images/car.png")) {
+        cerr << "Error loading car.png for player" << endl;
+        return -1;
+    }
+    RectangleShape player({ 200,150 });
+    player.setTexture(&playerCarTex);
+
+    // Opponent cars textures
+    Texture tObj[10];
+    for (int i = 1; i <= 8; i++) {
+        string filename = "images/" + to_string(i) + ".png";
+        tObj[i].loadFromFile(filename);
+    }
+    if (!tObj[9].loadFromFile("images/2nd.png")) {
+        cerr << "Warning: could not load images/2nd.png" << endl;
+    }
+    Texture* opponentCarTextures[2] = { &tObj[8], &tObj[9] };
+    bool useTwoOpponentTypes = (tObj[8].getSize().x > 0) && (tObj[9].getSize().x > 0);
+
+    // Track creation (no roadside objects)
+    vector<Line> lines;
+    int N_segments = 1600;
+
+    auto createTrack = [&](int segmentCount) {
+        vector<Line> tempLines;
+        tempLines.reserve(segmentCount);
+        int lastOppSegment = -1000;
+        const int minGapSegments = 50;
+        const int spawnChancePct = 2;
+        int placedOpponents = 0;
+
+        for (int i = 0; i < segmentCount; i++) {
+            Line ln;
+            ln.z = i * SEG_LEN;
+
+            // Place opponent cars
+            if (i > 200 && placedOpponents < 40) {
+                int roll = dist_opponent_placement(rng);
+                if (roll <= spawnChancePct && (i - lastOppSegment) >= minGapSegments) {
+                    ln.hasOpponent = true;
+                    int carTypeIndex = 0;
+                    if (useTwoOpponentTypes) {
+                        carTypeIndex = dist_opponent_type(rng);
+                    }
+
+                    if (opponentCarTextures[carTypeIndex]->getSize().x > 0) {
+                        ln.opCar = Sprite(*opponentCarTextures[carTypeIndex]);
+                    }
+                    else {
+                        ln.opCar = Sprite(playerCarTex);
+                    }
+
+                    // Random horizontal offset in road, not snapped to lanes (like player)
+                    ln.opCarHorizontalOffset = dist_opponent_pos(rng);
+
+                    lastOppSegment = i;
+                    placedOpponents++;
+                }
+            }
+
+            tempLines.push_back(ln);
+        }
+        return tempLines;
+        };
+
+    lines = createTrack(N_segments);
+    int N = (int)lines.size();
+
+    float playerX = 0.0f; // player horizontal pos normalized -1..1
+    int pos = 0;
+    int H = 1500;
+    bool isOver = false;
+
+    // Boost feature
+    const int MAX_BOOSTS = 3;
+    int boostsLeft = MAX_BOOSTS;
+    bool isBoosting = false;
+    float boostSpeedMultiplier = 2.5f;
+    float normalSpeed = 100.f;
+    float currentSpeed = normalSpeed;
+
+    while (window.isOpen()) {
+        Event e;
+        while (window.pollEvent(e)) {
+            if (e.type == Event::Closed)
+                window.close();
+
+            if (isOver && e.type == Event::KeyPressed) {
+                if (e.key.code == Keyboard::Y) {
+                    isOver = false;
+                    pos = 0;
+                    playerX = 0.0f;
+                    lines = createTrack(N_segments);
+                    boostsLeft = MAX_BOOSTS;
+                    currentSpeed = normalSpeed;
+                    isBoosting = false;
+                    engine.play();
+                    sfxOver.stop();
+                }
+                else if (e.key.code == Keyboard::N) {
+                    window.close();
+                }
+            }
+            if (!isOver && e.type == Event::KeyPressed) {
+                if (e.key.code == Keyboard::Space) {
+                    if (boostsLeft > 0 && !isBoosting) {
+                        isBoosting = true;
+                        boostsLeft--;
+                        sfxBoost.play();
+                    }
+                }
+            }
+        }
+
+        if (!isOver) {
+            // Steering - free movement, clamp inside lanes
+            float laneHalfWidth = 1.f / NUM_LANES; // 1/3 ~ 0.333
+            // Clamp playerX so car stays inside outer lanes (from -1 to +1 scaled by lanes)
+            float maxX = 1.f - laneHalfWidth;  // approx 0.666
+            if (playerX < -maxX) playerX = -maxX;
+            if (playerX > maxX) playerX = maxX;
+
+            if (Keyboard::isKeyPressed(Keyboard::Left)) {
+                playerX -= 0.03f;
+            }
+            if (Keyboard::isKeyPressed(Keyboard::Right)) {
+                playerX += 0.03f;
+            }
+
+            // Boost logic: boost lasts for about 60 frames (~1 second)
+            static int boostTimer = 0;
+            if (isBoosting) {
+                currentSpeed = normalSpeed * boostSpeedMultiplier;
+                boostTimer++;
+                if (boostTimer > 60) {
+                    isBoosting = false;
+                    boostTimer = 0;
+                    currentSpeed = normalSpeed;
+                }
+            }
+            else {
+                currentSpeed = normalSpeed;
+            }
+
+            // Move forward by currentSpeed
+            pos += (int)currentSpeed;
+            while (pos >= N * SEG_LEN) pos -= N * SEG_LEN;
+
+            // Draw background scrolling with the road position for parallax effect
+            window.clear(Color(40, 40, 40)); // fallback bg color
+
+            int bgOffsetX = int(playerX * 200);
+            background.setPosition(-2000 + bgOffsetX, 0);
+            window.draw(background);
+
+            int startPos = pos / SEG_LEN;
+            int camH = lines[startPos].y + H;
+            int maxy = HEIGHT;
+
+            for (int n = startPos; n < startPos + 300; n++) {
+                Line& L = lines[n % N];
+                L.project(playerX * ROAD_W, camH, startPos * SEG_LEN - (n >= N ? N * SEG_LEN : 0));
+                L.clip = maxy;
+                if (L.Y >= maxy) continue;
+                maxy = int(L.Y);
+
+                Line P = lines[(n - 1 + N) % N];
+
+                // Draw grass outside the road - green
+                drawQuad(window, Color(0, 150, 0), 0, int(P.Y), WIDTH, 0, int(L.Y), WIDTH);
+
+                // Draw road as dark gray
+                drawQuad(window, Color(80, 80, 80), int(P.X), int(P.Y), int(P.W), int(L.X), int(L.Y), int(L.W));
+
+                // Draw yellow dashed lane lines with scrolling offset
+                drawLaneLines(window, int(P.X), int(P.Y), int(P.W), int(L.X), int(L.Y), int(L.W), pos);
+            }
+
+            // Draw player car on top
+            player.setPosition(WIDTH / 2 + playerX * ROAD_W / 2 - player.getSize().x / 2, HEIGHT - 160);
+            FloatRect playerBounds = player.getGlobalBounds();
+
+            // Draw opponents and check collision
+            for (int n = startPos + 300 - 1; n >= startPos; n--) {
+                Line& L = lines[n % N];
+                if (L.hasOpponent) {
+                    L.project(playerX * ROAD_W, camH, startPos * SEG_LEN - (n >= N ? N * SEG_LEN : 0));
+                    FloatRect oppBounds = L.drawOpponent(window);
+                    if (oppBounds != FloatRect() && oppBounds.intersects(playerBounds)) {
+                        isOver = true;
+                        engine.stop();
+                        sfxOver.play();
+                        break;
+                    }
+                }
+            }
+
+            window.draw(player);
+
+            // Show boosts remaining & speed
+            stringstream ss;
+            ss << "Boosts Left: " << boostsLeft << "   Speed: " << int(currentSpeed);
+            tScore.setString(ss.str());
+            window.draw(tScore);
+
+            window.display();
+        }
+        else {
+            // Game over screen
+            window.clear(Color::Black);
+            window.draw(tGameOver);
+            window.draw(tPrompt);
+            window.display();
+        }
+    }
+
+    return 0;
+}
