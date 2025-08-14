@@ -22,6 +22,10 @@ const float CAM_D = 0.84f;  // Camera depth
 const int NUM_LANES = 3;
 
 // Game states
+enum GameState { MENU, CAR_SELECTION, PLAYING, GAME_OVER_PROMPT };
+
+// Car types
+enum CarType { NORMAL_CAR, POLICE_CAR };
 
 // Draw one segment of road as a quad
 void drawQuad(RenderWindow& w, Color c, int x1, int y1, int w1, int x2, int y2, int w2) {
@@ -133,9 +137,6 @@ struct Line {
 
         return FloatRect(carX, carY, destW, destH);
     }
-
-
-
 
     void drawScenery(RenderWindow& win, int playerZ) {
         if (!hasScenery || !scenerySprite.getTexture()) return;
@@ -454,21 +455,25 @@ int main() {
 
     if (!showMainMenu(window)) return 0;
 
+    // Show car selection screen
+    CarType selectedCar = showCarSelection(window);
+
+    // Load sounds based on selected car
     SoundBuffer bufEngine, bufOver, bufBoost;
     Sound engine, sfxOver, sfxBoost;
 
     bool soundEnabled = true;
     if (selectedCar == NORMAL_CAR) {
-    if (!bufEngine.loadFromFile("sounds/sound.wav")) {
-        cerr << "Warning: sound.wav not found" << endl;
-        soundEnabled = false;
+        if (!bufEngine.loadFromFile("sounds/sound.wav")) {
+            cerr << "Warning: sound.wav not found" << endl;
+            soundEnabled = false;
         }
     }
     else {
         if (!bufEngine.loadFromFile("sounds/policesound.wav")) {
             cerr << "Warning: policesound.wav not found" << endl;
             soundEnabled = false;
-    }
+        }
     }
 
     if (!bufOver.loadFromFile("sounds/game_over.wav")) {
@@ -553,11 +558,12 @@ int main() {
         cerr << "Warning: Booster UI textures not found" << endl;
     }
 
+    // Load player car based on selection
     Texture playerCarTex;
     if (selectedCar == NORMAL_CAR) {
-    if (!playerCarTex.loadFromFile("images/car.png")) {
-        cerr << "Warning: car.png not found" << endl;
-    }
+        if (!playerCarTex.loadFromFile("images/car.png")) {
+            cerr << "Warning: car.png not found" << endl;
+        }
     }
     else {
         if (!playerCarTex.loadFromFile("images/mainpolice.png")) {
@@ -1056,11 +1062,6 @@ int main() {
                     window.draw(boosterIcon);
                 }
             }
-
-
-
-
-
 
             window.display();
         }
