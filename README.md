@@ -19,7 +19,8 @@ A fast-paced SFML-based racing game featuring pseudo-3D graphics. Choose between
 
 
 <img width="1021" height="798" alt="image" src="https://github.com/user-attachments/assets/b233e038-9b5d-4ce9-8680-52dab2b1183f" />
-![Uploading Screenshot 2025-08-22 183627.png…]()
+<img width="1018" height="805" alt="Screenshot 2025-08-22 183627" src="https://github.com/user-attachments/assets/ea17e9af-c561-4a24-b4b3-ffa445a48103" />
+
 
 
 
