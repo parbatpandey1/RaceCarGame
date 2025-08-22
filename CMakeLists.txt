@@ -10,7 +10,7 @@ set(SFML_DIR "C:/SFML/lib/cmake/SFML")
 # Add the main executable
 add_executable(RaceCarGame
     RaceCarGame/src/main.cpp
-)
+ )
 
 # Include headers if needed
 target_include_directories(RaceCarGame PRIVATE RaceCarGame)
