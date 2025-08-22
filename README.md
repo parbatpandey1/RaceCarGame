@@ -15,19 +15,14 @@ A fast-paced SFML-based racing game featuring pseudo-3D graphics. Choose between
 - **Intuitive UI:** Includes a main menu, car selection screen, and game-over display.
 
 ---
+<img width="1013" height="797" alt="Screenshot 2025-08-22 183557" src="https://github.com/user-attachments/assets/f7aa050d-b492-4a93-8aa4-9b6c56798218" />
 
-## Table of Contents
 
-1. [Getting Started](#getting-started)  
-2. [Installation](#installation)  
-3. [Controls](#controls)  
-4. [Project Structure](#project-structure)  
-5. [Gameplay Tips](#gameplay-tips)  
-6. [Contributing](#contributing)  
-7. [License](#license)  
-8. [Contact](#contact)
+<img width="1021" height="798" alt="image" src="https://github.com/user-attachments/assets/b233e038-9b5d-4ce9-8680-52dab2b1183f" />
+![Uploading Screenshot 2025-08-22 183627.png…]()
 
----
+
+
 
 ## Getting Started
 
