@@ -45,8 +45,9 @@ A fast-paced SFML-based racing game featuring pseudo-3D graphics. Choose between
    git clone https://github.com/parbatpandey1/RaceCarGame.git
    cd RaceCarGame
 2. **Build the project**
-
-mkdir build && cd build
-cmake ..
-cmake --build .
-3. **./RaceCarGame
+   ```bash
+   mkdir build && cd build
+   cmake ..
+   cmake --build .
+3. **Run**
+./RaceCarGame
